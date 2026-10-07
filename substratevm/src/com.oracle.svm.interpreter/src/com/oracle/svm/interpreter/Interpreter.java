@@ -533,7 +533,7 @@ public final class Interpreter {
     private static void returnFromInterpreter(InterpreterResolvedJavaMethod method, int indent, long curBCI, long top, Object returnValue, int state) {
         traceInterpreterReturn(method, indent, curBCI, top);
         Thread currentThread = Thread.currentThread();
-        if (state == STATE_DEBUGGING && DebuggerEvents.singleton().isEventEnabled(currentThread, EventKind.METHOD_EXIT)) {
+        if (state == STATE_DEBUGGING && Root.debuggerEventsSupported() && DebuggerEvents.singleton().isEventEnabled(currentThread, EventKind.METHOD_EXIT)) {
             if (method.getDeclaringClass().isMethodExitEvent()) {
                 int flags = EventKind.METHOD_EXIT.getFlag() | EventKind.METHOD_EXIT_WITH_RETURN_VALUE.getFlag();
                 DebuggerEvents.singleton().getEventHandler().onEventAt(currentThread, method, (int) curBCI, returnValue, flags);
@@ -640,10 +640,9 @@ public final class Interpreter {
                     InterpreterUnresolvedSignature signature = method.getSignature();
                     Object[] calleeArgs = rebasic(frame.getArguments(), signature, !method.isStatic());
                     // This should integrate with the debugger GR-70801
-                    boolean preferStayInInterpreter = forceStayInInterpreter;
                     traceInvokeBasic(target, indent);
                     try {
-                        Object result = InterpreterToVM.dispatchInvocation(target, calleeArgs, CallKind.DIRECT, forceStayInInterpreter, preferStayInInterpreter, false);
+                        Object result = InterpreterToVM.dispatchInvocationWithTracing(target, calleeArgs, CallKind.DIRECT, forceStayInInterpreter);
                         yield unbasic(result, signature.getReturnKind());
                     } catch (SemanticJavaException e) {
                         throw uncheckedThrow(e.getCause());
@@ -657,10 +656,9 @@ public final class Interpreter {
                     boolean hasReceiver = intrinsic != SignaturePolymorphicIntrinsic.LinkToStatic;
                     Object[] basicArgs = unbasic(arguments, signature, hasReceiver);
                     // This should integrate with the debugger GR-70801
-                    boolean preferStayInInterpreter = forceStayInInterpreter;
                     traceLinkTo(resolutionSeed, intrinsic, indent);
                     try {
-                        Object result = InterpreterToVM.dispatchInvocation(resolutionSeed, basicArgs, intrinsic.getCallKind(), forceStayInInterpreter, preferStayInInterpreter, false);
+                        Object result = InterpreterToVM.dispatchInvocationWithTracing(resolutionSeed, basicArgs, intrinsic.getCallKind(), forceStayInInterpreter);
                         yield rebasic(result, signature.getReturnKind());
                     } catch (SemanticJavaException e) {
                         throw uncheckedThrow(e.getCause());
@@ -786,12 +784,12 @@ public final class Interpreter {
                         boolean forceStayInInterpreter) {
             /*
              * Debugging and profiling use separate handler variants. Debugger support takes
-             * precedence so events enabled during this invocation are still observed. Both
-             * capability checks fold at image build time.
+             * precedence so events enabled during this invocation are still observed. Tracing also
+             * uses debugging variants. These capability checks fold at image build time.
              */
             InterpreterOperandStack virtualStack = new CachedInterpreterOperandStack(startTop);
             final MethodProfile methodProfile;
-            if (debuggerEventsSupported()) {
+            if (debuggerEventsSupported() || InterpreterTraceSupport.getValue()) {
                 methodProfile = null;
                 virtualStack.setState(STATE_DEBUGGING);
             } else if (SubstrateOptions.useRistretto()) {
@@ -1230,18 +1228,17 @@ public final class Interpreter {
          * installation, processes single-step and breakpoint events, replaces
          * {@link Bytecodes#BREAKPOINT} with the original semantic opcode, delivers pending debugger
          * events, and stores the semantic opcode in {@link InterpreterFrame.DebugState#opcode}.
-         * Tracing-only configurations do not store the opcode.
+         * Tracing-only configurations also store the opcode for the debugging handler variants.
          */
         @AlwaysInline("Keep the interpreter fast path call-free")
         private static void prepareOpcodeForDispatch(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
             virtualStack.killUnusedFields();
-            boolean debuggerEventsSupported = virtualStack.getState() == STATE_DEBUGGING;
-            if (!debuggerEventsSupported && !InterpreterOptions.InterpreterTraceSupport.getValue()) {
+            if (virtualStack.getState() != STATE_DEBUGGING) {
                 return;
             }
 
             int opcode = BytecodeStream.opaqueOpcode(frame.code, curBCI);
-            if (debuggerEventsSupported) {
+            if (debuggerEventsSupported()) {
                 int dispatchBCI = (int) curBCI;
                 InterpreterResolvedJavaMethod method = frame.method;
                 int debuggerEventFlags = frame.debugState.debuggerEventFlags;
@@ -1263,9 +1260,7 @@ public final class Interpreter {
             if (InterpreterOptions.InterpreterTraceSupport.getValue()) {
                 traceInterpreterInstruction(frame, frame.debugState.indent, curBCI, virtualStack.topForFrameStackOperation(), opcode);
             }
-            if (debuggerEventsSupported) {
-                frame.debugState.opcode = opcode;
-            }
+            frame.debugState.opcode = opcode;
         }
 
         /**
@@ -3337,8 +3332,10 @@ public final class Interpreter {
                 }
             }
 
-            Object retObj = InterpreterToVM.dispatchInvocation(linkedInvoke.seedMethod, calleeArgs, linkedInvoke.callKind,
-                            callerFrame.forceStayInInterpreter(), callerFrame.forceStayInInterpreter() | preferStayInInterpreter, false);
+            boolean stayInInterpreter = callerFrame.forceStayInInterpreter() | preferStayInInterpreter;
+            Object retObj = invocationState == STATE_DEBUGGING
+                            ? InterpreterToVM.dispatchInvocationWithTracing(linkedInvoke.seedMethod, calleeArgs, linkedInvoke.callKind, stayInInterpreter)
+                            : InterpreterToVM.dispatchInvocation(linkedInvoke.seedMethod, calleeArgs, linkedInvoke.callKind, stayInInterpreter);
             virtualStack.pushBasicType(callerFrame, retObj, linkedInvoke.returnKind);
         }
 
@@ -3354,7 +3351,7 @@ public final class Interpreter {
 
         @AlwaysInline("Fold invoke opcode in individual handlers")
         private static void invokeBytecode(long curBCI, InterpreterFrame frame, int curOpcode, InterpreterOperandStack virtualStack) {
-            if (virtualStack.getState() == STATE_DEBUGGING) {
+            if (virtualStack.getState() == STATE_DEBUGGING && debuggerEventsSupported()) {
                 boolean preferStayInInterpreter = frame.debugState.beforeInvoke();
                 try {
                     invoke(curBCI, frame, virtualStack, curOpcode, preferStayInInterpreter);
@@ -3402,7 +3399,7 @@ public final class Interpreter {
         @BytecodeInterpreterHandler(value = INVOKEDYNAMIC)
         private static long invokedynamicHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
             virtualStack.materialize(frame);
-            if (virtualStack.getState() == STATE_DEBUGGING) {
+            if (virtualStack.getState() == STATE_DEBUGGING && debuggerEventsSupported()) {
                 boolean preferStayInInterpreter = frame.debugState.beforeInvoke();
                 try {
                     invokeDynamic(curBCI, frame, virtualStack, preferStayInInterpreter);
@@ -3466,8 +3463,10 @@ public final class Interpreter {
                 profileAndCheckReceiver(frame, curBCI, calleeArgs, virtualStack.getState());
             }
 
-            Object retObj = InterpreterToVM.dispatchInvocation(seedMethod, calleeArgs, CallKind.DIRECT, frame.forceStayInInterpreter(), frame.forceStayInInterpreter() | preferStayInInterpreter,
-                            false);
+            boolean stayInInterpreter = frame.forceStayInInterpreter() | preferStayInInterpreter;
+            Object retObj = invocationState == STATE_DEBUGGING
+                            ? InterpreterToVM.dispatchInvocationWithTracing(seedMethod, calleeArgs, CallKind.DIRECT, stayInInterpreter)
+                            : InterpreterToVM.dispatchInvocation(seedMethod, calleeArgs, CallKind.DIRECT, stayInInterpreter);
             virtualStack.pushKind(frame, retObj, seedSignature.getReturnKind());
         }
 
