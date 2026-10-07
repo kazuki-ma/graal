@@ -51,19 +51,14 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
         return state >= STATE_NORMAL && state <= STATE_TOS_2;
     }
 
-    @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
-    private int getTosLevel() {
-        return switch (state) {
-            case STATE_TOS_1 -> 1;
-            case STATE_TOS_2 -> 2;
-            default -> 0;
-        };
-    }
-
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     long topForFrameStackOperation() {
-        return top + getTosLevel();
+        return switch (state) {
+            case STATE_TOS_1 -> top + 1;
+            case STATE_TOS_2 -> top + 2;
+            default -> top;
+        };
     }
 
     @AlwaysInline("Materialize cached primitives before direct frame-stack access")
@@ -81,50 +76,59 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
 
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void materialize(InterpreterFrame frame) {
-        if (state == STATE_PROFILING || state == STATE_DEBUGGING) {
-            return;
+        switch (state) {
+            case STATE_PROFILING, STATE_DEBUGGING -> {
+                return;
+            }
+            case STATE_TOS_1 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                top++;
+            }
+            case STATE_TOS_2 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                frame.setPrimitive(top, 1, tosPrimitive1);
+                top += 2;
+            }
+            default -> {
+            }
         }
-        if (getTosLevel() == 1) {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            top++;
-        } else if (getTosLevel() == 2) {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            frame.setPrimitive(top, 1, tosPrimitive1);
-            top += 2;
-        }
-        setState(STATE_NORMAL);
+        state = STATE_NORMAL;
         tosPrimitive0 = GraalDirectives.unconstrainedValue();
         tosPrimitive1 = GraalDirectives.unconstrainedValue();
     }
 
     @AlwaysInline("Kill dependencies on unused cached primitive values")
     void killUnusedFields() {
-        if (getTosLevel() == 0) {
-            tosPrimitive0 = GraalDirectives.unconstrainedValue();
-            tosPrimitive1 = GraalDirectives.unconstrainedValue();
-        } else if (getTosLevel() == 1) {
-            tosPrimitive1 = GraalDirectives.unconstrainedValue();
+        switch (state) {
+            case STATE_TOS_1 -> tosPrimitive1 = GraalDirectives.unconstrainedValue();
+            case STATE_TOS_2 -> {
+            }
+            default -> {
+                tosPrimitive0 = GraalDirectives.unconstrainedValue();
+                tosPrimitive1 = GraalDirectives.unconstrainedValue();
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void pushInt(InterpreterFrame frame, int value) {
-        if (state == STATE_PROFILING || state == STATE_DEBUGGING) {
-            super.pushInt(frame, value);
-            return;
-        }
-        if (getTosLevel() == 0) {
-            tosPrimitive0 = GraalDirectives.packInt(value);
-            setState(STATE_TOS_1);
-        } else if (getTosLevel() == 1) {
-            tosPrimitive1 = GraalDirectives.packInt(value);
-            setState(STATE_TOS_2);
-        } else {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            tosPrimitive0 = tosPrimitive1;
-            tosPrimitive1 = GraalDirectives.packInt(value);
-            top++;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                tosPrimitive1 = GraalDirectives.packInt(value);
+                state = STATE_TOS_2;
+            }
+            case STATE_TOS_2 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                tosPrimitive0 = tosPrimitive1;
+                tosPrimitive1 = GraalDirectives.packInt(value);
+                top++;
+            }
+            case STATE_PROFILING, STATE_DEBUGGING -> super.pushInt(frame, value);
+            default -> {
+                tosPrimitive0 = GraalDirectives.packInt(value);
+                state = STATE_TOS_1;
+            }
         }
     }
 
@@ -137,24 +141,25 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void pushLong(InterpreterFrame frame, long value) {
-        if (state == STATE_PROFILING || state == STATE_DEBUGGING) {
-            super.pushLong(frame, value);
-            return;
-        }
-        if (getTosLevel() == 0) {
-            tosPrimitive0 = GraalDirectives.unconstrainedValue();
-            tosPrimitive1 = value;
-            setState(STATE_TOS_2);
-        } else if (getTosLevel() == 1) {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            tosPrimitive1 = value;
-            top++;
-            setState(STATE_TOS_2);
-        } else {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            frame.setPrimitive(top, 1, tosPrimitive1);
-            tosPrimitive1 = value;
-            top += 2;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                tosPrimitive1 = value;
+                top++;
+                state = STATE_TOS_2;
+            }
+            case STATE_TOS_2 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                frame.setPrimitive(top, 1, tosPrimitive1);
+                tosPrimitive1 = value;
+                top += 2;
+            }
+            case STATE_PROFILING, STATE_DEBUGGING -> super.pushLong(frame, value);
+            default -> {
+                tosPrimitive0 = GraalDirectives.unconstrainedValue();
+                tosPrimitive1 = value;
+                state = STATE_TOS_2;
+            }
         }
     }
 
@@ -184,7 +189,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
         assert state == STATE_NORMAL || state == STATE_PROFILING || state == STATE_DEBUGGING;
         int invocationState = state;
         for (; GraalDirectives.injectBranchProbability(GraalDirectives.LIKELY_PROBABILITY, argumentIndex >= 0); argumentIndex--) {
-            setState(invocationState);
+            state = invocationState;
             popArgument(frame, argumentKinds, arguments, argumentIndex);
         }
     }
@@ -192,49 +197,61 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     int popInt(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            int value = (int) frame.getPrimitive(top, -1);
-            top--;
-            return value;
-        } else if (getTosLevel() == 1) {
-            setState(STATE_NORMAL);
-            return GraalDirectives.unpackInt(tosPrimitive0);
-        } else {
-            setState(STATE_TOS_1);
-            return GraalDirectives.unpackInt(tosPrimitive1);
+        switch (state) {
+            case STATE_TOS_1 -> {
+                state = STATE_NORMAL;
+                return GraalDirectives.unpackInt(tosPrimitive0);
+            }
+            case STATE_TOS_2 -> {
+                state = STATE_TOS_1;
+                return GraalDirectives.unpackInt(tosPrimitive1);
+            }
+            default -> {
+                int value = (int) frame.getPrimitive(top, -1);
+                top--;
+                return value;
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     float popFloat(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            float value = Float.intBitsToFloat((int) frame.getPrimitive(top, -1));
-            top--;
-            return value;
-        } else if (getTosLevel() == 1) {
-            setState(STATE_NORMAL);
-            return GraalDirectives.assumeFloat(tosPrimitive0);
-        } else {
-            setState(STATE_TOS_1);
-            return GraalDirectives.assumeFloat(tosPrimitive1);
+        switch (state) {
+            case STATE_TOS_1 -> {
+                state = STATE_NORMAL;
+                return GraalDirectives.assumeFloat(tosPrimitive0);
+            }
+            case STATE_TOS_2 -> {
+                state = STATE_TOS_1;
+                return GraalDirectives.assumeFloat(tosPrimitive1);
+            }
+            default -> {
+                float value = Float.intBitsToFloat((int) frame.getPrimitive(top, -1));
+                top--;
+                return value;
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     long popLong(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            long value = frame.getPrimitive(top, -1);
-            top -= 2;
-            return value;
-        } else if (getTosLevel() == 1) {
-            top--;
-            setState(STATE_NORMAL);
-            return tosPrimitive0;
-        } else {
-            setState(STATE_NORMAL);
-            return tosPrimitive1;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                top--;
+                state = STATE_NORMAL;
+                return tosPrimitive0;
+            }
+            case STATE_TOS_2 -> {
+                state = STATE_NORMAL;
+                return tosPrimitive1;
+            }
+            default -> {
+                long value = frame.getPrimitive(top, -1);
+                top -= 2;
+                return value;
+            }
         }
     }
 
@@ -247,7 +264,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     Object popObject(InterpreterFrame frame) {
-        if (getTosLevel() != 0) {
+        if (state == STATE_TOS_1 || state == STATE_TOS_2) {
             // Objects are never cached, so verified bytecode cannot enter this variant.
             GraalDirectives.unreachable();
         }
@@ -257,89 +274,124 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void pop1(InterpreterFrame frame, boolean clear) {
-        if (getTosLevel() == 0) {
-            if (clear) {
-                frame.setReference(top, -1, null);
+        switch (state) {
+            case STATE_TOS_1 -> {
+                state = STATE_NORMAL;
             }
-            top--;
-        } else if (getTosLevel() == 1) {
-            setState(STATE_NORMAL);
-        } else {
-            setState(STATE_TOS_1);
+            case STATE_TOS_2 -> {
+                state = STATE_TOS_1;
+            }
+            default -> {
+                if (clear) {
+                    frame.setReference(top, -1, null);
+                }
+                top--;
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void pop2(InterpreterFrame frame, boolean clear) {
-        if (getTosLevel() == 0) {
-            if (clear) {
-                frame.setReference(top, -1, null);
-                frame.setReference(top, -2, null);
+        switch (state) {
+            case STATE_TOS_1 -> {
+                if (clear) {
+                    frame.setReference(top, -1, null);
+                }
+                top--;
+                state = STATE_NORMAL;
             }
-            top -= 2;
-        } else if (getTosLevel() == 1) {
-            if (clear) {
-                frame.setReference(top, -1, null);
+            case STATE_TOS_2 -> {
+                state = STATE_NORMAL;
             }
-            top--;
-            setState(STATE_NORMAL);
-        } else {
-            setState(STATE_NORMAL);
+            default -> {
+                if (clear) {
+                    frame.setReference(top, -1, null);
+                    frame.setReference(top, -2, null);
+                }
+                top -= 2;
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     int peekInt(InterpreterFrame frame, long offset) {
-        if (getTosLevel() == 2) {
-            if (offset == -1) {
-                return GraalDirectives.unpackInt(tosPrimitive1);
+        switch (state) {
+            case STATE_TOS_2 -> {
+                if (offset == -1) {
+                    return GraalDirectives.unpackInt(tosPrimitive1);
+                }
+                if (offset == -2) {
+                    return GraalDirectives.unpackInt(tosPrimitive0);
+                }
+                offset += 2;
             }
-            if (offset == -2) {
-                return GraalDirectives.unpackInt(tosPrimitive0);
+            case STATE_TOS_1 -> {
+                if (offset == -1) {
+                    return GraalDirectives.unpackInt(tosPrimitive0);
+                }
+                offset++;
             }
-        } else if (getTosLevel() == 1 && offset == -1) {
-            return GraalDirectives.unpackInt(tosPrimitive0);
+            default -> {
+            }
         }
-        assert offset < -getTosLevel();
-        return (int) frame.getPrimitive(top, offset + getTosLevel());
+        assert offset < 0;
+        return (int) frame.getPrimitive(top, offset);
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     float peekFloat(InterpreterFrame frame, long offset) {
-        if (getTosLevel() == 2) {
-            if (offset == -1) {
-                return GraalDirectives.assumeFloat(tosPrimitive1);
+        switch (state) {
+            case STATE_TOS_2 -> {
+                if (offset == -1) {
+                    return GraalDirectives.assumeFloat(tosPrimitive1);
+                }
+                if (offset == -2) {
+                    return GraalDirectives.assumeFloat(tosPrimitive0);
+                }
+                offset += 2;
             }
-            if (offset == -2) {
-                return GraalDirectives.assumeFloat(tosPrimitive0);
+            case STATE_TOS_1 -> {
+                if (offset == -1) {
+                    return GraalDirectives.assumeFloat(tosPrimitive0);
+                }
+                offset++;
             }
-        } else if (getTosLevel() == 1 && offset == -1) {
-            return GraalDirectives.assumeFloat(tosPrimitive0);
+            default -> {
+            }
         }
-        assert offset < -getTosLevel();
-        return Float.intBitsToFloat((int) frame.getPrimitive(top, offset + getTosLevel()));
+        assert offset < 0;
+        return Float.intBitsToFloat((int) frame.getPrimitive(top, offset));
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     long peekLong(InterpreterFrame frame, long offset) {
-        if (getTosLevel() == 2) {
-            if (offset == -1) {
-                return tosPrimitive1;
+        switch (state) {
+            case STATE_TOS_2 -> {
+                if (offset == -1) {
+                    return tosPrimitive1;
+                }
+                if (offset == -2) {
+                    return tosPrimitive0;
+                }
+                offset += 2;
             }
-            if (offset == -2) {
-                return tosPrimitive0;
+            case STATE_TOS_1 -> {
+                if (offset == -1) {
+                    return tosPrimitive0;
+                }
+                offset++;
             }
-        } else if (getTosLevel() == 1 && offset == -1) {
-            return tosPrimitive0;
+            default -> {
+            }
         }
-        if (offset >= -getTosLevel()) {
+        if (offset >= 0) {
             GraalDirectives.unreachable();
         }
-        return frame.getPrimitive(top, offset + getTosLevel());
+        return frame.getPrimitive(top, offset);
     }
 
     @Override
@@ -351,137 +403,174 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     Object peekObject(InterpreterFrame frame, long offset) {
-        if (offset >= -getTosLevel()) {
+        offset += switch (state) {
+            case STATE_TOS_1 -> 1;
+            case STATE_TOS_2 -> 2;
+            default -> 0;
+        };
+        if (offset >= 0) {
             GraalDirectives.unreachable();
         }
-        return frame.getReference(top, offset + getTosLevel());
+        return frame.getReference(top, offset);
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void dup1(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            copySlot(frame, -1, 0);
-            top++;
-        } else if (getTosLevel() == 1) {
-            tosPrimitive1 = tosPrimitive0;
-            setState(STATE_TOS_2);
-        } else {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            tosPrimitive0 = tosPrimitive1;
-            top++;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                tosPrimitive1 = tosPrimitive0;
+                state = STATE_TOS_2;
+            }
+            case STATE_TOS_2 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                tosPrimitive0 = tosPrimitive1;
+                top++;
+            }
+            default -> {
+                copySlot(frame, -1, 0);
+                top++;
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void dupx1(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            super.dupx1(frame);
-        } else if (getTosLevel() == 1) {
-            copySlot(frame, -1, 0);
-            overwriteSlot(frame, -1, tosPrimitive0);
-            top++;
-        } else {
-            frame.setPrimitive(top, 0, tosPrimitive1);
-            top++;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                copySlot(frame, -1, 0);
+                overwriteSlot(frame, -1, tosPrimitive0);
+                top++;
+            }
+            case STATE_TOS_2 -> {
+                frame.setPrimitive(top, 0, tosPrimitive1);
+                top++;
+            }
+            default -> {
+                super.dupx1(frame);
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void dupx2(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            super.dupx2(frame);
-        } else if (getTosLevel() == 1) {
-            copySlot(frame, -1, 0);
-            copySlot(frame, -2, -1);
-            overwriteSlot(frame, -2, tosPrimitive0);
-            top++;
-        } else {
-            copySlot(frame, -1, 0);
-            overwriteSlot(frame, -1, tosPrimitive1);
-            top++;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                copySlot(frame, -1, 0);
+                copySlot(frame, -2, -1);
+                overwriteSlot(frame, -2, tosPrimitive0);
+                top++;
+            }
+            case STATE_TOS_2 -> {
+                copySlot(frame, -1, 0);
+                overwriteSlot(frame, -1, tosPrimitive1);
+                top++;
+            }
+            default -> {
+                super.dupx2(frame);
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void dup2(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            super.dup2(frame);
-        } else if (getTosLevel() == 1) {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            copySlot(frame, -1, 1);
-            top += 2;
-        } else {
-            frame.setPrimitive(top, 0, tosPrimitive0);
-            frame.setPrimitive(top, 1, tosPrimitive1);
-            top += 2;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                copySlot(frame, -1, 1);
+                top += 2;
+            }
+            case STATE_TOS_2 -> {
+                frame.setPrimitive(top, 0, tosPrimitive0);
+                frame.setPrimitive(top, 1, tosPrimitive1);
+                top += 2;
+            }
+            default -> {
+                super.dup2(frame);
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void dup2x1(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            super.dup2x1(frame);
-        } else if (getTosLevel() == 1) {
-            copySlot(frame, -1, 1);
-            copySlot(frame, -2, 0);
-            copySlot(frame, -1, -2);
-            overwriteSlot(frame, -1, tosPrimitive0);
-            top += 2;
-        } else {
-            copySlot(frame, -1, 1);
-            overwriteSlot(frame, -1, tosPrimitive0);
-            overwriteSlot(frame, 0, tosPrimitive1);
-            top += 2;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                copySlot(frame, -1, 1);
+                copySlot(frame, -2, 0);
+                copySlot(frame, -1, -2);
+                overwriteSlot(frame, -1, tosPrimitive0);
+                top += 2;
+            }
+            case STATE_TOS_2 -> {
+                copySlot(frame, -1, 1);
+                overwriteSlot(frame, -1, tosPrimitive0);
+                overwriteSlot(frame, 0, tosPrimitive1);
+                top += 2;
+            }
+            default -> {
+                super.dup2x1(frame);
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void dup2x2(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            super.dup2x2(frame);
-        } else if (getTosLevel() == 1) {
-            copySlot(frame, -1, 1);
-            copySlot(frame, -2, 0);
-            copySlot(frame, -3, -1);
-            copySlot(frame, 1, -3);
-            overwriteSlot(frame, -2, tosPrimitive0);
-            top += 2;
-        } else {
-            copySlot(frame, -1, 1);
-            copySlot(frame, -2, 0);
-            overwriteSlot(frame, -2, tosPrimitive0);
-            overwriteSlot(frame, -1, tosPrimitive1);
-            top += 2;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                copySlot(frame, -1, 1);
+                copySlot(frame, -2, 0);
+                copySlot(frame, -3, -1);
+                copySlot(frame, 1, -3);
+                overwriteSlot(frame, -2, tosPrimitive0);
+                top += 2;
+            }
+            case STATE_TOS_2 -> {
+                copySlot(frame, -1, 1);
+                copySlot(frame, -2, 0);
+                overwriteSlot(frame, -2, tosPrimitive0);
+                overwriteSlot(frame, -1, tosPrimitive1);
+                top += 2;
+            }
+            default -> {
+                super.dup2x2(frame);
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void swap(InterpreterFrame frame) {
-        if (getTosLevel() == 0) {
-            super.swap(frame);
-        } else if (getTosLevel() == 1) {
-            copySlot(frame, -1, 0);
-            overwriteSlot(frame, -1, tosPrimitive0);
-            top++;
-            setState(STATE_NORMAL);
-        } else {
-            long value = tosPrimitive0;
-            tosPrimitive0 = tosPrimitive1;
-            tosPrimitive1 = value;
+        switch (state) {
+            case STATE_TOS_1 -> {
+                copySlot(frame, -1, 0);
+                overwriteSlot(frame, -1, tosPrimitive0);
+                top++;
+                state = STATE_NORMAL;
+            }
+            case STATE_TOS_2 -> {
+                long value = tosPrimitive0;
+                tosPrimitive0 = tosPrimitive1;
+                tosPrimitive1 = value;
+            }
+            default -> {
+                super.swap(frame);
+            }
         }
     }
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void clearOperandStack(InterpreterFrame frame) {
-        materialize(frame);
+        top = topForFrameStackOperation();
+        if (state == STATE_TOS_1 || state == STATE_TOS_2) {
+            state = STATE_NORMAL;
+        }
+        killUnusedFields();
         super.clearOperandStack(frame);
     }
 

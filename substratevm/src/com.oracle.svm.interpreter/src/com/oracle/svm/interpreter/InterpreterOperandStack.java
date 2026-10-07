@@ -283,6 +283,8 @@ class InterpreterOperandStack {
 
     @AlwaysInline("Keep materialized invocation argument stack transitions together")
     void popArgumentsWithAppendix(InterpreterFrame frame, boolean hasReceiver, InterpreterUnresolvedSignature signature, Object[] arguments, Object appendix) {
+        assert state == STATE_NORMAL || state == STATE_PROFILING || state == STATE_DEBUGGING;
+        int invocationState = state;
         int argumentCount = signature.getParameterCount(false);
         int receiverCount = hasReceiver ? 1 : 0;
 
@@ -291,6 +293,8 @@ class InterpreterOperandStack {
         arguments[lastStackArgument + receiverCount] = appendix;
         lastStackArgument--;
         for (int index = lastStackArgument; index >= 0; index--) {
+            // Keep the entry mode constant across virtual pops in the loop.
+            setState(invocationState);
             arguments[index + receiverCount] = popKind(frame, signature.getParameterKind(index));
         }
         if (hasReceiver) {
