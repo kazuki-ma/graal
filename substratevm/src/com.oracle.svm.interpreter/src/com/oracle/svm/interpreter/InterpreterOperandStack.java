@@ -92,6 +92,20 @@ class InterpreterOperandStack {
         this.state = state;
     }
 
+    /** Materialized stacks have no cached fields to flush. */
+    void materialize(InterpreterFrame frame) {
+    }
+
+    /** Materialized stacks have no cached dependencies to kill. */
+    void killUnusedFields() {
+    }
+
+    @AlwaysInline("Materialize cached primitives before direct frame-stack access")
+    long materializeForFrameStackOperation(InterpreterFrame frame) {
+        materialize(frame);
+        return top;
+    }
+
     boolean isValidState(int state) {
         return state >= STATE_NORMAL && state <= STATE_DEBUGGING;
     }

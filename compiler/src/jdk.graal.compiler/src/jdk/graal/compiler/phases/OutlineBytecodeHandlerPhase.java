@@ -126,7 +126,7 @@ public abstract class OutlineBytecodeHandlerPhase extends BasePhase<HighTierCont
                 guaranteeConsistentHandlerConfig(handlerConfig, enclosingMethod, invokeEnclosingMethod, targetMethod, templateModeEnabled());
                 BytecodeHandlerCallSite callsite = getBytecodeHandlerCallSite(invokeEnclosingMethod, invoke.bci(), targetMethod);
                 ValueNode[] oldArguments = invoke.callTarget().arguments().toArray(ValueNode.EMPTY_ARRAY);
-                ValueNode[] newArguments = callsite.createCallerArguments(oldArguments, invoke.asFixedNode(), getFieldMap(context.getMetaAccess()));
+                ValueNode[] newArguments = callsite.createCallerArguments(oldArguments, invoke.asFixedNode(), getFieldMap(context.getMetaAccess()), getTypeMap(context.getMetaAccess()));
                 FixedNode next = invoke instanceof InvokeNode invokeNode ? invokeNode.next() : ((InvokeWithExceptionNode) invoke).next().next();
                 FixedNode newInvoke = replaceInvoke(context, callsite, invoke, newArguments);
                 callsite.updateCallerReturns(newInvoke, oldArguments, next, getFieldMap(context.getMetaAccess()));

@@ -315,7 +315,7 @@ public final class BytecodeHandlerInvokePlugin implements NodePlugin {
         int abiSlotIndex = 0;
         if (!target.isStatic()) {
             GraalError.guarantee(!argumentAnnotations.isEmpty(), "Missing receiver argument config for %s", target);
-            abiSlotIndex = nextAbiSlotIndex(argumentAnnotations.get(originalParameterIndex), declaringClass, abiSlotIndex, true);
+            abiSlotIndex = nextAbiSlotIndex(argumentAnnotations.get(originalParameterIndex), declaringClass, declaringClass, abiSlotIndex, true);
             originalParameterIndex++;
         }
 
@@ -332,19 +332,20 @@ public final class BytecodeHandlerInvokePlugin implements NodePlugin {
                                 "returnValue argument type %s does not match return type %s", parameterType.getJavaKind(), returnKind);
                 copyFromReturnInfo = new CopyFromReturnInfo(originalParameterIndex, abiSlotIndex, returnKind);
             }
-            abiSlotIndex = nextAbiSlotIndex(parameterConfig, parameterType, abiSlotIndex, false);
+            abiSlotIndex = nextAbiSlotIndex(parameterConfig, parameterType, declaringClass, abiSlotIndex, false);
         }
         GraalError.guarantee(originalParameterIndex == argumentAnnotations.size(), "Unused argument config for %s", target);
         return copyFromReturnInfo;
     }
 
-    private static int nextAbiSlotIndex(AnnotationValue argumentConfig, ResolvedJavaType argumentType, int currentAbiSlotIndex, boolean receiver) {
+    private static int nextAbiSlotIndex(AnnotationValue argumentConfig, ResolvedJavaType argumentType, ResolvedJavaType accessingType, int currentAbiSlotIndex, boolean receiver) {
+        ResolvedJavaType expandedType = BytecodeHandlerConfig.getExpandedType(argumentConfig, argumentType, accessingType);
         return switch (expansionKind(argumentConfig)) {
             case "NONE" -> currentAbiSlotIndex + 1;
             case "MATERIALIZED" -> currentAbiSlotIndex + 1 + countMaterializedFields(argumentConfig, argumentType);
             case "VIRTUAL" -> {
                 GraalError.guarantee(!receiver, "Receiver cannot be VIRTUAL");
-                yield currentAbiSlotIndex + countVirtualAbiFields(argumentConfig, argumentType);
+                yield currentAbiSlotIndex + countVirtualAbiFields(argumentConfig, expandedType);
             }
             default -> throw GraalError.shouldNotReachHere("Unknown expansion kind " + expansionKind(argumentConfig));
         };

@@ -39,6 +39,7 @@ import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.Signature;
+import jdk.vm.ci.meta.UnresolvedJavaType;
 
 /**
  * Aggregates metadata derived from a {@code BytecodeInterpreterHandlerConfig} annotation which is
@@ -242,6 +243,7 @@ public final class BytecodeHandlerConfig {
     private static int appendReceiver(List<ArgumentInfo> arguments, AnnotationValue receiverConfig, ResolvedJavaType declaringClass, int originalIndex, int currentIndex,
                     boolean templateModeEnabled) {
         ExpansionKind expansionKind = getExpansionKind(receiverConfig);
+        getExpandedType(receiverConfig, declaringClass, declaringClass);
         boolean nonNull = receiverConfig.getBoolean("nonNull");
         int nextIndex = currentIndex;
 
@@ -262,6 +264,7 @@ public final class BytecodeHandlerConfig {
     private static int appendParameter(List<ArgumentInfo> arguments, AnnotationValue parameterConfig, ResolvedJavaType parameterType, ResolvedJavaType declaringClass, int originalIndex,
                     int currentIndex, boolean templateModeEnabled) {
         ExpansionKind expansionKind = getExpansionKind(parameterConfig);
+        ResolvedJavaType expandedType = getExpandedType(parameterConfig, parameterType, declaringClass);
         boolean copyFromReturn = parameterConfig.getBoolean("returnValue");
         boolean nonNull = !parameterType.isPrimitive() && parameterConfig.getBoolean("nonNull");
         int nextIndex = currentIndex;
@@ -272,7 +275,7 @@ public final class BytecodeHandlerConfig {
             }
             case VIRTUAL -> {
                 List<AnnotationValue> fields = parameterConfig.getList("fields", AnnotationValue.class);
-                for (ResolvedJavaField javaField : parameterType.getInstanceFields(true)) {
+                for (ResolvedJavaField javaField : expandedType.getInstanceFields(true)) {
                     ResolvedJavaType fieldType = javaField.getType().resolve(declaringClass);
                     boolean fieldNonNull = false;
                     AnnotationValue fieldConfig = findFieldConfig(fields, javaField.getName());
@@ -284,7 +287,7 @@ public final class BytecodeHandlerConfig {
                         GraalError.guarantee(fieldType.getJavaKind() == JavaKind.Int, "Template variable field %s must be int", javaField.format("%H.%n"));
                     }
                     int argumentIndex = templateVariants > 0 ? -1 : nextIndex++;
-                    arguments.add(new ArgumentInfo(fieldType, argumentIndex, originalIndex, false, false, true, parameterType, javaField, true, javaField.isFinal(),
+                    arguments.add(new ArgumentInfo(fieldType, argumentIndex, originalIndex, false, false, true, expandedType, javaField, true, javaField.isFinal(),
                                     fieldNonNull, templateVariants));
                 }
             }
@@ -333,6 +336,38 @@ public final class BytecodeHandlerConfig {
             }
         }
         return null;
+    }
+
+    /**
+     * Resolves the virtual layout type, shared by stub construction and early ABI accounting.
+     */
+    public static ResolvedJavaType getExpandedType(AnnotationValue argumentConfig, ResolvedJavaType declaredType, ResolvedJavaType accessingType) {
+        ResolvedJavaType type = getExplicitExpandedType(argumentConfig);
+        if (type == null) {
+            return declaredType;
+        }
+        GraalError.guarantee(getExpansionKind(argumentConfig) == ExpansionKind.VIRTUAL,
+                        "expandedType requires VIRTUAL expansion");
+        GraalError.guarantee(type.isInstanceClass() && !type.isAbstract(),
+                        "expandedType %s must be a concrete instance class", type);
+        // Class-valued annotation elements may belong to the underlying VM rather than the
+        // analysis/hosted universe used by the handler signature and graph.
+        type = accessingType.lookupType(UnresolvedJavaType.create(type.getName()), true);
+        GraalError.guarantee(declaredType.isAssignableFrom(type),
+                        "expandedType %s must be a concrete instance class assignable to %s", type, declaredType);
+        return type;
+    }
+
+    /**
+     * Returns null for the default layout, including annotation families that do not expose
+     * expandedType (such as HostCompilerDirectives).
+     */
+    public static ResolvedJavaType getExplicitExpandedType(AnnotationValue argumentConfig) {
+        if (!argumentConfig.getElements().containsKey("expandedType")) {
+            return null;
+        }
+        ResolvedJavaType type = argumentConfig.getType("expandedType");
+        return type.getJavaKind() == JavaKind.Void ? null : type;
     }
 
     private static ExpansionKind getExpansionKind(AnnotationValue argumentConfig) {

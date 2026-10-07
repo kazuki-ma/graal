@@ -209,6 +209,19 @@ In the earlier example, `@Argument(expand = VIRTUAL)` expands the `State state` 
 
 Escape analysis can work in both the caller and the handler, potentially keeping both wrapper objects in registers instead of memory. With scalar replacement, the field can stay in the same register across different compilation units, effectively extending escape analysis beyond a single compilation unit.
 
+The compiler's `BytecodeInterpreterDirectives` annotation additionally supports `expandedType` to select an exact concrete subclass while handlers keep a base-class parameter:
+
+```java
+@Argument(expand = VIRTUAL, expandedType = CachedState.class)
+```
+
+The selected class must be assignable to the parameter type.
+All its instance fields, including inherited fields, are expanded, and stubs reconstruct that exact class.
+At each outlined call, the compiler must prove that the argument is non-null and has exactly the selected type; otherwise compilation fails.
+This allows subclass overrides to specialize handler code without changing handler signatures.
+The default, `void.class`, retains the declared parameter type.
+An explicit `expandedType` is supported only with `VIRTUAL` expansion.
+
 > **Important:** `ExpansionKind.VIRTUAL` arguments don't remain reference-consistent across stub invocations.
 
 ### Calling Convention
