@@ -3248,6 +3248,7 @@ public final class Interpreter {
         @BytecodeInterpreterHandler(value = QUICK_GETSTATIC)
         private static long quickGetstaticHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
             StaticStorage staticStorage = quickGetStaticStorage(curBCI, frame);
+            InterpreterUtil.guarantee(staticStorage.storage != null);
             getField(frame, staticStorage.field, virtualStack, staticStorage.type, true, staticStorage.storage);
             return advanceToNextBytecode(curBCI, QUICK_GETSTATIC, frame, virtualStack);
         }
@@ -3492,6 +3493,7 @@ public final class Interpreter {
             int length = virtualStack.peekInt(frame, -1);
             long cpi = BytecodeStream.uncheckedReadCPI2(frame.code, curBCI);
             InterpreterResolvedJavaType componentType = resolveType(frame, ANEWARRAY, cpi);
+            virtualStack.materialize(frame);
             Object array = InterpreterToVM.createNewReferenceArray(componentType, length);
             virtualStack.pop1(frame, false);
             virtualStack.pushObject(frame, array);
@@ -3672,7 +3674,7 @@ public final class Interpreter {
                 dimensions[i] = virtualStack.peekInt(frame, i - allocatedDimensions);
             }
             Object value = allocateMultiArray(multiArrayType, dimensions);
-            virtualStack.applyFrameStackOperationDelta(-allocatedDimensions);
+            virtualStack.applyFrameStackOperationDelta(frame, -allocatedDimensions);
             virtualStack.pushObject(frame, value);
             return advanceToNextBytecode(curBCI, MULTIANEWARRAY, frame, virtualStack);
         }

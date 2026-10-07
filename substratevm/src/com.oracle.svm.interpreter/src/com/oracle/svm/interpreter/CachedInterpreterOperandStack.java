@@ -74,9 +74,9 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
 
     @Override
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
-    void applyFrameStackOperationDelta(int slotDelta) {
-        assert getTosLevel() == 0;
-        top += slotDelta;
+    void applyFrameStackOperationDelta(InterpreterFrame frame, int slotDelta) {
+        materialize(frame);
+        super.applyFrameStackOperationDelta(frame, slotDelta);
     }
 
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")

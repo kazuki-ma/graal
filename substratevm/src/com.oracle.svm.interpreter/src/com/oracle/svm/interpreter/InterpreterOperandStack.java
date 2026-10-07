@@ -52,7 +52,7 @@ import jdk.vm.ci.meta.JavaKind;
  * {@link #top} and {@link #state} fields. Handlers therefore must not let it escape across calls
  * that would force materialization. At a frame-stack operation boundary, {@link #topForFrameStackOperation()}
  * exposes only the stack top to code that operates directly on the frame, and
- * {@link #applyFrameStackOperationDelta(int)} applies any resulting stack-slot delta. The
+ * {@link #applyFrameStackOperationDelta(InterpreterFrame, int)} applies any resulting stack-slot delta. The
  * operation does not need to be outlined; the boundary prevents this overlay from being passed to
  * it and materialized.
  *
@@ -129,7 +129,7 @@ class InterpreterOperandStack {
      *            removed by the operation
      */
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
-    void applyFrameStackOperationDelta(int slotDelta) {
+    void applyFrameStackOperationDelta(InterpreterFrame frame, int slotDelta) {
         top += slotDelta;
     }
 
