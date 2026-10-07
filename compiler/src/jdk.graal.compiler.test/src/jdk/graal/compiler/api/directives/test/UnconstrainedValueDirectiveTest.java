@@ -30,27 +30,21 @@ import org.junit.Test;
 import jdk.graal.compiler.api.directives.GraalDirectives;
 import jdk.graal.compiler.core.test.GraalCompilerTest;
 import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.StructuredGraph.AllowAssumptions;
 import jdk.graal.compiler.nodes.calc.ArbitraryValueNode;
 
-public class ArbitraryValueDirectiveTest extends GraalCompilerTest {
+public class UnconstrainedValueDirectiveTest extends GraalCompilerTest {
 
-    public static long snippet(long value) {
-        return GraalDirectives.arbitraryValue(value);
-    }
-
-    public static double doubleSnippet(double value) {
-        return GraalDirectives.arbitraryValue(value);
+    public static long snippet() {
+        return GraalDirectives.unconstrainedValue();
     }
 
     @Test
-    public void testArbitraryDoubleValue() {
-        test("doubleSnippet", -0.0d);
-        test("doubleSnippet", Double.NaN);
-    }
-
-    @Test
-    public void testArbitraryValue() {
-        test("snippet", 42L);
+    public void testUnconstrainedValue() {
+        // Inspect and compile the node, without observing its unrestricted result.
+        StructuredGraph graph = parseEager("snippet", AllowAssumptions.YES);
+        checkHighTierGraph(graph);
+        getCode(getResolvedJavaMethod("snippet"));
     }
 
     @Override

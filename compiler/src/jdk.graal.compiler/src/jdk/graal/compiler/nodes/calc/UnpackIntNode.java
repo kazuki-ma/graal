@@ -42,15 +42,15 @@ import jdk.graal.compiler.nodes.spi.NodeLIRBuilderTool;
 import jdk.vm.ci.meta.JavaKind;
 
 /**
- * Narrows a {@code long} that is known to be a sign-extended {@code int}. The result shares the
+ * Reads the low 32 bits of a packed {@code long}, ignoring its upper bits. The result shares the
  * input's allocated location because the low 32 bits already contain the required value.
  */
 @NodeInfo(cycles = CYCLES_0, size = SIZE_0)
-public final class AssumeIntNode extends UnaryNode implements LIRLowerable {
+public final class UnpackIntNode extends UnaryNode implements LIRLowerable {
 
-    public static final NodeClass<AssumeIntNode> TYPE = NodeClass.create(AssumeIntNode.class);
+    public static final NodeClass<UnpackIntNode> TYPE = NodeClass.create(UnpackIntNode.class);
 
-    public AssumeIntNode(ValueNode value) {
+    public UnpackIntNode(ValueNode value) {
         super(TYPE, StampFactory.forKind(JavaKind.Int), value);
         assert value.getStackKind() == JavaKind.Long : value;
     }

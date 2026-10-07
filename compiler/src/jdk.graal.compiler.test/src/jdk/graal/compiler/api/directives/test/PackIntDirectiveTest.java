@@ -28,38 +28,35 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import jdk.graal.compiler.api.directives.GraalDirectives;
-import jdk.graal.compiler.core.common.type.IntegerStamp;
 import jdk.graal.compiler.core.test.GraalCompilerTest;
-import jdk.graal.compiler.nodes.NodeView;
-import jdk.graal.compiler.nodes.ReturnNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
-import jdk.graal.compiler.nodes.calc.AssumeIntNode;
-import jdk.graal.compiler.nodes.calc.NarrowNode;
+import jdk.graal.compiler.nodes.calc.PackIntNode;
+import jdk.graal.compiler.nodes.calc.SignExtendNode;
 
-public class AssumeIntDirectiveTest extends GraalCompilerTest {
+public class PackIntDirectiveTest extends GraalCompilerTest {
+    public static int add(int a, int b) {
+        long packed = GraalDirectives.packInt(a + b);
+        return GraalDirectives.unpackInt(packed);
+    }
 
-    public static long snippet(long value) {
-        long assumedInt = GraalDirectives.assumeInt(value);
-        return (int) assumedInt;
+    public static int store(long[] array, int a, int b) {
+        array[0] = GraalDirectives.packInt(a + b);
+        return GraalDirectives.unpackInt(array[0]);
     }
 
     @Test
-    public void testAssumeInt() {
-        test("snippet", (long) Integer.MIN_VALUE);
-        test("snippet", -1L);
-        test("snippet", 0L);
-        test("snippet", (long) Integer.MAX_VALUE);
+    public void testOverflowAndNegativeValues() {
+        for (int a : new int[]{0, 1, -1, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+            for (int b : new int[]{0, 1, -1, Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+                test("add", a, b);
+                test("store", new long[1], a, b);
+            }
+        }
     }
 
     @Override
     protected void checkHighTierGraph(StructuredGraph graph) {
-        Assert.assertEquals(1, graph.getNodes().filter(AssumeIntNode.class).count());
-        Assert.assertTrue(graph.getNodes().filter(NarrowNode.class).isEmpty());
-
-        ReturnNode returnNode = graph.getNodes(ReturnNode.TYPE).first();
-        IntegerStamp stamp = (IntegerStamp) returnNode.result().stamp(NodeView.DEFAULT);
-        Assert.assertEquals(64, stamp.getBits());
-        Assert.assertEquals(Integer.MIN_VALUE, stamp.lowerBound());
-        Assert.assertEquals(Integer.MAX_VALUE, stamp.upperBound());
+        Assert.assertEquals(1, graph.getNodes().filter(PackIntNode.class).count());
+        Assert.assertTrue(graph.getNodes().filter(SignExtendNode.class).isEmpty());
     }
 }

@@ -109,10 +109,4 @@ public final class UnreachablePathNode extends ControlSinkNode implements Simpli
         ((SubstrateLIRGenerator) gen.getLIRGeneratorTool()).emitDeadEnd();
     }
 
-    /**
-     * The caller guarantees that this path cannot execute. This is not a replacement for a
-     * runtime error check: preceding operations on the rejected path may be removed.
-     */
-    @NodeIntrinsic
-    public static native void unreachable();
 }

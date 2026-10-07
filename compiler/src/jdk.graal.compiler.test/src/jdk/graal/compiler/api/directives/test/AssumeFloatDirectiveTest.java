@@ -33,7 +33,7 @@ import jdk.graal.compiler.core.test.GraalCompilerTest;
 import jdk.graal.compiler.nodes.NodeView;
 import jdk.graal.compiler.nodes.ReturnNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
-import jdk.graal.compiler.nodes.calc.AssumeIntNode;
+import jdk.graal.compiler.nodes.calc.UnpackIntNode;
 import jdk.graal.compiler.nodes.calc.NarrowNode;
 
 public class AssumeFloatDirectiveTest extends GraalCompilerTest {
@@ -53,7 +53,7 @@ public class AssumeFloatDirectiveTest extends GraalCompilerTest {
 
     @Override
     protected void checkHighTierGraph(StructuredGraph graph) {
-        Assert.assertEquals(1, graph.getNodes().filter(AssumeIntNode.class).count());
+        Assert.assertEquals(1, graph.getNodes().filter(UnpackIntNode.class).count());
         Assert.assertTrue(graph.getNodes().filter(NarrowNode.class).isEmpty());
 
         ReturnNode returnNode = graph.getNodes(ReturnNode.TYPE).first();

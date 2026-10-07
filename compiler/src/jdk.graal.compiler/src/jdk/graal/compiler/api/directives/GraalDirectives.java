@@ -254,17 +254,32 @@ public final class GraalDirectives {
     }
 
     /**
-     * Returns {@code value} as an {@code int} while allowing the compiler to assume that it was
-     * sign-extended to a {@code long}. The caller must guarantee that this is true.
+     * Reads the low 32 bits of a packed primitive without requiring a narrowing move. The upper
+     * bits are ignored.
      */
-    public static int assumeInt(long value) {
+    public static int unpackInt(long value) {
         return (int) value;
     }
 
     /**
-     * Returns the {@code float} represented by the raw bits in {@code value} while allowing the
-     * compiler to assume that those bits were sign-extended to a {@code long}. The caller must
-     * guarantee that this is true.
+     * Packs an integer into the low 32 bits of a long location without extending it. The upper
+     * bits are unspecified and must not be observed. Use {@link #unpackInt(long)} to read it.
+     */
+    public static long packInt(int value) {
+        return value;
+    }
+
+    /**
+     * Declares an impossible execution path. The compiler may discard preceding operations on
+     * that path. This is not a runtime error check. An uncompiled invocation throws an error.
+     */
+    public static void unreachable() {
+        throw new AssertionError("Unreachable execution path");
+    }
+
+    /**
+     * Returns the float represented by the low 32 bits of a packed primitive. The upper bits
+     * are ignored.
      */
     public static float assumeFloat(long value) {
         return Float.intBitsToFloat((int) value);
@@ -290,19 +305,9 @@ public final class GraalDirectives {
     /**
      * Returns a {@code long} whose value must not be observed. When used as an additional return
      * value, the compiler may leave the corresponding fixed return register unchanged. The
-     * argument identifies the value whose dependency is being killed but does not constrain the
-     * result. In interpreted execution this method returns zero.
+     * result has no input dependency. In interpreted execution this method returns zero.
      */
-    @SuppressWarnings("unused")
-    public static long arbitraryValue(long value) {
-        return 0;
-    }
-
-    /**
-     * Double-valued counterpart of {@link #arbitraryValue(long)}. The result must not be observed.
-     */
-    @SuppressWarnings("unused")
-    public static double arbitraryValue(double value) {
+    public static long unconstrainedValue() {
         return 0;
     }
 

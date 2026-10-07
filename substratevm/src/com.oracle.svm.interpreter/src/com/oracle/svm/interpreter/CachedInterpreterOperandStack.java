@@ -24,7 +24,6 @@
  */
 package com.oracle.svm.interpreter;
 
-import com.oracle.svm.core.graal.nodes.UnreachablePathNode;
 import com.oracle.svm.shared.AlwaysInline;
 
 import jdk.graal.compiler.api.directives.GraalDirectives;
@@ -94,17 +93,17 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
             top += 2;
         }
         setState(STATE_NORMAL);
-        tosPrimitive0 = GraalDirectives.arbitraryValue(tosPrimitive0);
-        tosPrimitive1 = GraalDirectives.arbitraryValue(tosPrimitive1);
+        tosPrimitive0 = GraalDirectives.unconstrainedValue();
+        tosPrimitive1 = GraalDirectives.unconstrainedValue();
     }
 
     @AlwaysInline("Kill dependencies on unused cached primitive values")
     void killUnusedFields() {
         if (getTosLevel() == 0) {
-            tosPrimitive0 = GraalDirectives.arbitraryValue(tosPrimitive0);
-            tosPrimitive1 = GraalDirectives.arbitraryValue(tosPrimitive1);
+            tosPrimitive0 = GraalDirectives.unconstrainedValue();
+            tosPrimitive1 = GraalDirectives.unconstrainedValue();
         } else if (getTosLevel() == 1) {
-            tosPrimitive1 = GraalDirectives.arbitraryValue(tosPrimitive1);
+            tosPrimitive1 = GraalDirectives.unconstrainedValue();
         }
     }
 
@@ -116,15 +115,15 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
             return;
         }
         if (getTosLevel() == 0) {
-            tosPrimitive0 = value;
+            tosPrimitive0 = GraalDirectives.packInt(value);
             setState(STATE_TOS_1);
         } else if (getTosLevel() == 1) {
-            tosPrimitive1 = value;
+            tosPrimitive1 = GraalDirectives.packInt(value);
             setState(STATE_TOS_2);
         } else {
             frame.setPrimitive(top, 0, tosPrimitive0);
             tosPrimitive0 = tosPrimitive1;
-            tosPrimitive1 = value;
+            tosPrimitive1 = GraalDirectives.packInt(value);
             top++;
         }
     }
@@ -143,7 +142,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
             return;
         }
         if (getTosLevel() == 0) {
-            tosPrimitive0 = GraalDirectives.arbitraryValue(tosPrimitive0);
+            tosPrimitive0 = GraalDirectives.unconstrainedValue();
             tosPrimitive1 = value;
             setState(STATE_TOS_2);
         } else if (getTosLevel() == 1) {
@@ -201,10 +200,10 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
             return value;
         } else if (getTosLevel() == 1) {
             setState(STATE_NORMAL);
-            return GraalDirectives.assumeInt(tosPrimitive0);
+            return GraalDirectives.unpackInt(tosPrimitive0);
         } else {
             setState(STATE_TOS_1);
-            return GraalDirectives.assumeInt(tosPrimitive1);
+            return GraalDirectives.unpackInt(tosPrimitive1);
         }
     }
 
@@ -252,7 +251,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     Object popObject(InterpreterFrame frame) {
         if (getTosLevel() != 0) {
             // Objects are never cached, so verified bytecode cannot enter this variant.
-            UnreachablePathNode.unreachable();
+            GraalDirectives.unreachable();
         }
         return super.popObject(frame);
     }
@@ -297,13 +296,13 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     int peekInt(InterpreterFrame frame, long offset) {
         if (getTosLevel() == 2) {
             if (offset == -1) {
-                return GraalDirectives.assumeInt(tosPrimitive1);
+                return GraalDirectives.unpackInt(tosPrimitive1);
             }
             if (offset == -2) {
-                return GraalDirectives.assumeInt(tosPrimitive0);
+                return GraalDirectives.unpackInt(tosPrimitive0);
             }
         } else if (getTosLevel() == 1 && offset == -1) {
-            return GraalDirectives.assumeInt(tosPrimitive0);
+            return GraalDirectives.unpackInt(tosPrimitive0);
         }
         assert offset < -getTosLevel();
         return (int) frame.getPrimitive(top, offset + getTosLevel());
@@ -340,7 +339,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
             return tosPrimitive0;
         }
         if (offset >= -getTosLevel()) {
-            UnreachablePathNode.unreachable();
+            GraalDirectives.unreachable();
         }
         return frame.getPrimitive(top, offset + getTosLevel());
     }
@@ -355,7 +354,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     Object peekObject(InterpreterFrame frame, long offset) {
         if (offset >= -getTosLevel()) {
-            UnreachablePathNode.unreachable();
+            GraalDirectives.unreachable();
         }
         return frame.getReference(top, offset + getTosLevel());
     }

@@ -135,7 +135,7 @@ class InterpreterOperandStack {
 
     @AlwaysInline("Keep InterpreterOperandStack virtual-expanded")
     void pushInt(InterpreterFrame frame, int value) {
-        frame.setPrimitive(top, 0, value);
+        frame.setPrimitive(top, 0, GraalDirectives.packInt(value));
         top++;
     }
 

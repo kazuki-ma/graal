@@ -113,7 +113,8 @@ import jdk.graal.compiler.nodes.calc.IsNullNode;
 import jdk.graal.compiler.nodes.calc.LeftShiftNode;
 import jdk.graal.compiler.nodes.calc.ArbitraryValueNode;
 import jdk.graal.compiler.nodes.calc.PackFloatNode;
-import jdk.graal.compiler.nodes.calc.AssumeIntNode;
+import jdk.graal.compiler.nodes.calc.PackIntNode;
+import jdk.graal.compiler.nodes.calc.UnpackIntNode;
 import jdk.graal.compiler.nodes.calc.NarrowNode;
 import jdk.graal.compiler.nodes.calc.ObjectEqualsNode;
 import jdk.graal.compiler.nodes.calc.ReinterpretNode;
@@ -2047,17 +2048,24 @@ public class StandardGraphBuilderPlugins {
                 return true;
             }
         });
-        r.register(new RequiredInlineOnlyInvocationPlugin("assumeInt", long.class) {
+        r.register(new RequiredInlineOnlyInvocationPlugin("unpackInt", long.class) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod method, Receiver receiver, ValueNode value) {
-                b.addPush(JavaKind.Int, new AssumeIntNode(value));
+                b.addPush(JavaKind.Int, new UnpackIntNode(value));
+                return true;
+            }
+        });
+        r.register(new RequiredInlineOnlyInvocationPlugin("packInt", int.class) {
+            @Override
+            public boolean apply(GraphBuilderContext b, ResolvedJavaMethod method, Receiver receiver, ValueNode value) {
+                b.addPush(JavaKind.Long, new PackIntNode(value));
                 return true;
             }
         });
         r.register(new RequiredInlineOnlyInvocationPlugin("assumeFloat", long.class) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod method, Receiver receiver, ValueNode value) {
-                ValueNode rawBits = new AssumeIntNode(value);
+                ValueNode rawBits = new UnpackIntNode(value);
                 b.addPush(JavaKind.Float, ReinterpretNode.create(JavaKind.Float, rawBits, NodeView.DEFAULT));
                 return true;
             }
@@ -2078,16 +2086,9 @@ public class StandardGraphBuilderPlugins {
                 return true;
             }
         });
-        r.register(new RequiredInlineOnlyInvocationPlugin("arbitraryValue", double.class) {
+        r.register(new RequiredInlineOnlyInvocationPlugin("unconstrainedValue") {
             @Override
-            public boolean apply(GraphBuilderContext b, ResolvedJavaMethod method, Receiver receiver, ValueNode value) {
-                b.addPush(JavaKind.Double, new ArbitraryValueNode(JavaKind.Double));
-                return true;
-            }
-        });
-        r.register(new RequiredInlineOnlyInvocationPlugin("arbitraryValue", long.class) {
-            @Override
-            public boolean apply(GraphBuilderContext b, ResolvedJavaMethod method, Receiver receiver, ValueNode value) {
+            public boolean apply(GraphBuilderContext b, ResolvedJavaMethod method, Receiver receiver) {
                 b.addPush(JavaKind.Long, new ArbitraryValueNode());
                 return true;
             }

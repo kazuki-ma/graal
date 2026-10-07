@@ -29,6 +29,7 @@ import org.junit.Test;
 
 import com.oracle.svm.core.graal.nodes.UnreachablePathNode;
 
+import jdk.graal.compiler.api.directives.GraalDirectives;
 import jdk.graal.compiler.core.test.GraalCompilerTest;
 import jdk.graal.compiler.nodes.ConstantNode;
 import jdk.graal.compiler.nodes.IfNode;
@@ -49,7 +50,7 @@ public class UnreachablePathNodeTest extends GraalCompilerTest {
     @Override
     protected void registerInvocationPlugins(InvocationPlugins plugins) {
         super.registerInvocationPlugins(plugins);
-        plugins.register(UnreachablePathNode.class, new InvocationPlugin("unreachable") {
+        plugins.register(GraalDirectives.class, new InvocationPlugin("unreachable") {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver) {
                 b.add(new UnreachablePathNode());
@@ -60,14 +61,14 @@ public class UnreachablePathNodeTest extends GraalCompilerTest {
 
     public static void straightLine() {
         effect = 1;
-        UnreachablePathNode.unreachable();
+        GraalDirectives.unreachable();
     }
 
     public static int conditional(boolean reject) {
         effect = 1;
         if (reject) {
             effect = 2;
-            UnreachablePathNode.unreachable();
+            GraalDirectives.unreachable();
         }
         return 42;
     }
@@ -78,16 +79,16 @@ public class UnreachablePathNodeTest extends GraalCompilerTest {
         } else {
             effect = 2;
         }
-        UnreachablePathNode.unreachable();
+        GraalDirectives.unreachable();
     }
 
     public static void bothBranches(boolean branch) {
         if (branch) {
             effect = 1;
-            UnreachablePathNode.unreachable();
+            GraalDirectives.unreachable();
         } else {
             effect = 2;
-            UnreachablePathNode.unreachable();
+            GraalDirectives.unreachable();
         }
     }
 
@@ -95,7 +96,7 @@ public class UnreachablePathNodeTest extends GraalCompilerTest {
         for (int i = 0; i < count; i++) {
             effect = i;
         }
-        UnreachablePathNode.unreachable();
+        GraalDirectives.unreachable();
     }
 
     public static void afterThrowingCall(Object value) {
@@ -105,7 +106,7 @@ public class UnreachablePathNodeTest extends GraalCompilerTest {
             effect = 2;
             return;
         }
-        UnreachablePathNode.unreachable();
+        GraalDirectives.unreachable();
     }
 
     @BytecodeParserNeverInline(invokeWithException = true)
