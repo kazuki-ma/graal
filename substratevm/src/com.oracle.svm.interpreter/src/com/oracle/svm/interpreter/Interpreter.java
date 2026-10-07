@@ -3369,6 +3369,7 @@ public final class Interpreter {
         @NeverInlineTrivial(reason = "BytecodeInterpreterHandler")
         @BytecodeInterpreterHandler(value = INVOKEVIRTUAL)
         private static long invokevirtualHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
+            virtualStack.materialize(frame);
             invokeBytecode(curBCI, frame, INVOKEVIRTUAL, virtualStack);
             return advanceToNextBytecode(curBCI, INVOKEVIRTUAL, frame, virtualStack);
         }
@@ -3376,6 +3377,7 @@ public final class Interpreter {
         @NeverInlineTrivial(reason = "BytecodeInterpreterHandler")
         @BytecodeInterpreterHandler(value = INVOKESPECIAL)
         private static long invokespecialHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
+            virtualStack.materialize(frame);
             invokeBytecode(curBCI, frame, INVOKESPECIAL, virtualStack);
             return advanceToNextBytecode(curBCI, INVOKESPECIAL, frame, virtualStack);
         }
@@ -3383,6 +3385,7 @@ public final class Interpreter {
         @NeverInlineTrivial(reason = "BytecodeInterpreterHandler")
         @BytecodeInterpreterHandler(value = INVOKESTATIC)
         private static long invokestaticHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
+            virtualStack.materialize(frame);
             invokeBytecode(curBCI, frame, INVOKESTATIC, virtualStack);
             return advanceToNextBytecode(curBCI, INVOKESTATIC, frame, virtualStack);
         }
@@ -3390,6 +3393,7 @@ public final class Interpreter {
         @NeverInlineTrivial(reason = "BytecodeInterpreterHandler")
         @BytecodeInterpreterHandler(value = INVOKEINTERFACE)
         private static long invokeinterfaceHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
+            virtualStack.materialize(frame);
             invokeBytecode(curBCI, frame, INVOKEINTERFACE, virtualStack);
             return advanceToNextBytecode(curBCI, INVOKEINTERFACE, frame, virtualStack);
         }
@@ -3397,6 +3401,7 @@ public final class Interpreter {
         @NeverInlineTrivial(reason = "BytecodeInterpreterHandler")
         @BytecodeInterpreterHandler(value = INVOKEDYNAMIC)
         private static long invokedynamicHandler(long curBCI, InterpreterFrame frame, InterpreterOperandStack virtualStack) {
+            virtualStack.materialize(frame);
             if (virtualStack.getState() == STATE_DEBUGGING) {
                 boolean preferStayInInterpreter = frame.debugState.beforeInvoke();
                 try {

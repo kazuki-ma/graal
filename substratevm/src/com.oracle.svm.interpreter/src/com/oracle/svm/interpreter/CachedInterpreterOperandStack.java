@@ -179,16 +179,14 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     }
 
     @Override
-    @AlwaysInline("Materialize cached arguments before the argument loop")
+    @AlwaysInline("Keep the materialized state constant in the argument loop")
     void popArguments(InterpreterFrame frame, byte[] argumentKinds, Object[] arguments, long argumentIndex) {
-        if (state == STATE_PROFILING || state == STATE_DEBUGGING) {
-            super.popArguments(frame, argumentKinds, arguments, argumentIndex);
-            return;
+        assert state == STATE_NORMAL || state == STATE_PROFILING || state == STATE_DEBUGGING;
+        int invocationState = state;
+        for (; GraalDirectives.injectBranchProbability(GraalDirectives.LIKELY_PROBABILITY, argumentIndex >= 0); argumentIndex--) {
+            setState(invocationState);
+            popArgument(frame, argumentKinds, arguments, argumentIndex);
         }
-        materialize(frame);
-        assert state == STATE_NORMAL;
-        super.popArguments(frame, argumentKinds, arguments, argumentIndex);
-        setState(STATE_NORMAL);
     }
 
     @Override
