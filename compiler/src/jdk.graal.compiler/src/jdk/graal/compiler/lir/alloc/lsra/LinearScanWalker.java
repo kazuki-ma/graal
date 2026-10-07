@@ -366,7 +366,8 @@ class LinearScanWalker extends IntervalWalker {
                 if (isActiveRegister(interval)) {
                     int nextUsage = interval.nextUsage(registerPriority, currentPosition);
                     int usePosition;
-                    if (preferStateOnlyVictim && !hasFutureRegisterUsageInSplitFamily(interval)) {
+                    int nextRegisterUsage = preferStateOnlyVictim ? nextRegisterUsageInSplitFamily(interval, currentPosition) : Integer.MAX_VALUE;
+                    if (preferStateOnlyVictim && nextRegisterUsage == Integer.MAX_VALUE) {
                         /*
                          * A value with no future register-requiring use can remain in its spill
                          * slot. Prefer it as the victim over a value that must later return to a
@@ -379,8 +380,9 @@ class LinearScanWalker extends IntervalWalker {
                         if (preferStateOnlyVictim && nextUsage == Integer.MAX_VALUE && callClobberSplits != null) {
                             CallClobberSplit split = callClobberSplits.get(interval);
                             if (split != null && interval.to() == split.splitPosition()) {
-                                // An earlier move-placement boundary is not a use of the value.
-                                usePosition = split.clobberPosition();
+                                // Ignore the move-placement boundary, but not a use in another child
+                                // before the call clobber.
+                                usePosition = Math.min(split.clobberPosition(), nextRegisterUsage);
                             }
                         }
                     }
@@ -391,17 +393,16 @@ class LinearScanWalker extends IntervalWalker {
         }
     }
 
-    private boolean hasFutureRegisterUsageInSplitFamily(Interval interval) {
+    private static int nextRegisterUsageInSplitFamily(Interval interval, int from) {
         Interval splitParent = interval.splitParent();
         if (splitParent.getSplitChildren().isEmpty()) {
-            return splitParent.nextUsage(RegisterPriority.ShouldHaveRegister, currentPosition) != Integer.MAX_VALUE;
+            return splitParent.nextUsage(RegisterPriority.ShouldHaveRegister, from);
         }
+        int nextUsage = Integer.MAX_VALUE;
         for (Interval splitChild : splitParent.getSplitChildren()) {
-            if (splitChild.nextUsage(RegisterPriority.ShouldHaveRegister, currentPosition) != Integer.MAX_VALUE) {
-                return true;
-            }
+            nextUsage = Math.min(nextUsage, splitChild.nextUsage(RegisterPriority.ShouldHaveRegister, from));
         }
-        return false;
+        return nextUsage;
     }
 
     @SuppressWarnings("try")
@@ -832,7 +833,8 @@ class LinearScanWalker extends IntervalWalker {
         CallClobberSplit split = callClobberSplits.get(parent);
         return split != null && parent.to() == split.splitPosition() &&
                         spilled.from() == split.splitPosition() && spilled.from() + 1 == split.clobberPosition() &&
-                        allocator.blockForId(parent.from()) == allocator.blockForId(split.clobberPosition());
+                        allocator.blockForId(parent.from()) == allocator.blockForId(split.clobberPosition()) &&
+                        nextRegisterUsageInSplitFamily(parent, parent.from()) > split.clobberPosition();
     }
 
     // split an interval at the optimal position between minSplitPos and
