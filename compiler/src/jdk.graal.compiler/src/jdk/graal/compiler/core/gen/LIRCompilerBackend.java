@@ -24,7 +24,9 @@
  */
 package jdk.graal.compiler.core.gen;
 
+import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.List;
 
@@ -33,6 +35,7 @@ import jdk.graal.compiler.core.LIRGenerationPhase;
 import jdk.graal.compiler.core.common.GraalOptions;
 import jdk.graal.compiler.core.common.alloc.LinearScanOrder;
 import jdk.graal.compiler.core.common.alloc.RegisterAllocationConfig;
+import jdk.graal.compiler.core.common.cfg.BasicBlock;
 import jdk.graal.compiler.core.common.cfg.CodeEmissionOrder;
 import jdk.graal.compiler.core.common.cfg.CodeEmissionOrder.ComputationTime;
 import jdk.graal.compiler.core.target.Backend;
@@ -44,6 +47,8 @@ import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.debug.TimerKey;
 import jdk.graal.compiler.lir.ComputeCodeEmissionOrder;
 import jdk.graal.compiler.lir.LIR;
+import jdk.graal.compiler.lir.LIRInstruction;
+import jdk.graal.compiler.lir.StandardOp;
 import jdk.graal.compiler.lir.alloc.OutOfRegistersException;
 import jdk.graal.compiler.lir.asm.CompilationResultBuilder;
 import jdk.graal.compiler.lir.asm.CompilationResultBuilderFactory;
@@ -73,6 +78,110 @@ import jdk.vm.ci.meta.SpeculationLog;
 import jdk.vm.ci.meta.VMConstant;
 
 public class LIRCompilerBackend {
+    // Diagnostic only: isolate outlined-call constraints from the invoke handler's hot region.
+    private static void testHandlerBlockOrder(LIR lir, int[] order, boolean allocationOrder) {
+        BitSet cold = new BitSet();
+        BitSet returns = new BitSet();
+        BasicBlock<?> dispatch = null;
+        for (int id : order) {
+            BasicBlock<?> block = lir.getBlockById(id);
+            for (LIRInstruction op : lir.getLIRforBlock(block)) {
+                if (op instanceof StandardOp.CallOp) {
+                    if (op.toString().contains("InterpreterToVM.dispatchInvocation")) {
+                        GraalError.guarantee(dispatch == null || dispatch == block, "multiple dispatch blocks");
+                        dispatch = block;
+                    } else {
+                        cold.set(id);
+                    }
+                } else if (op.toString().contains("ZERO_MEMORY")) {
+                    cold.set(id);
+                } else if (op.name().equals("RETURN")) {
+                    returns.set(id);
+                }
+            }
+        }
+        int dispatchId = dispatch == null ? -1 : dispatch.getId();
+        // Keep slow-path-only entry blocks with their calls, not in the hot allocation order.
+        boolean changed;
+        do {
+            changed = false;
+            for (int id : order) {
+                BasicBlock<?> block = lir.getBlockById(id);
+                if (cold.get(id) || id == dispatchId || block.getPredecessorCount() == 0 || block.getSuccessorCount() == 0) {
+                    continue;
+                }
+                boolean allSuccessorsCold = true;
+                for (int i = 0; i < block.getSuccessorCount(); i++) {
+                    allSuccessorsCold &= cold.get(block.getSuccessorAt(i).getId());
+                }
+                if (allSuccessorsCold) {
+                    cold.set(id);
+                    changed = true;
+                }
+            }
+        } while (changed);
+        // Only paths reachable from entry without a cold operation can be fast paths.
+        BitSet reachable = new BitSet();
+        ArrayDeque<BasicBlock<?>> pending = new ArrayDeque<>();
+        pending.add(lir.getBlockById(order[0]));
+        while (!pending.isEmpty()) {
+            BasicBlock<?> block = pending.removeFirst();
+            int id = block.getId();
+            if (reachable.get(id) || cold.get(id)) {
+                continue;
+            }
+            reachable.set(id);
+            for (int i = 0; i < block.getSuccessorCount(); i++) {
+                pending.add(block.getSuccessorAt(i));
+            }
+        }
+        // Exclude traps and slow-only continuations, even when they contain no call themselves.
+        BitSet fast = new BitSet();
+        for (int id : order) {
+            if (returns.get(id) && reachable.get(id)) {
+                pending.add(lir.getBlockById(id));
+            }
+        }
+        while (!pending.isEmpty()) {
+            BasicBlock<?> block = pending.removeFirst();
+            int id = block.getId();
+            if (fast.get(id) || !reachable.get(id)) {
+                continue;
+            }
+            fast.set(id);
+            for (int i = 0; i < block.getPredecessorCount(); i++) {
+                pending.add(block.getPredecessorAt(i));
+            }
+        }
+        if (fast.isEmpty()) {
+            return;
+        }
+        BitSet beforeDispatch = new BitSet();
+        if (dispatch != null) {
+            pending.add(dispatch);
+        }
+        while (!pending.isEmpty()) {
+            BasicBlock<?> block = pending.removeFirst();
+            if (beforeDispatch.get(block.getId()) || !fast.get(block.getId())) {
+                continue;
+            }
+            beforeDispatch.set(block.getId());
+            for (int i = 0; i < block.getPredecessorCount(); i++) {
+                pending.add(block.getPredecessorAt(i));
+            }
+        }
+        Integer[] sorted = Arrays.stream(order).boxed().toArray(Integer[]::new);
+        java.util.function.IntUnaryOperator rank = id -> !fast.get(id) ? 4 : returns.get(id) ? 3 : id == dispatchId ? 1 : dispatchId == -1 || beforeDispatch.get(id) ? 0 : 2;
+        Arrays.sort(sorted, java.util.Comparator.comparingInt(rank::applyAsInt));
+        for (int i = 0; i < order.length; i++) {
+            order[i] = sorted[i];
+            if (allocationOrder) {
+                lir.getBlockById(order[i]).setLinearScanNumber(i);
+            }
+        }
+        lir.getDebug().log("Experimental handler block order: %s", Arrays.toString(order));
+    }
+
     private static final TimerKey EmitLIR = DebugContext.timer("EmitLIR").doc("Time spent generating LIR from HIR.");
     private static final TimerKey EmitCode = DebugContext.timer("EmitCode").doc("Time spent generating machine code from LIR.");
     private static final TimerKey BackEnd = DebugContext.timer("BackEnd").doc("Time spent in EmitLIR and EmitCode.");
@@ -159,6 +268,9 @@ public class LIRCompilerBackend {
             // LIR generation
             LIRGenerationPhase.LIRGenerationContext context = new LIRGenerationPhase.LIRGenerationContext(lirGen, nodeLirGen, graph, schedule);
             new LIRGenerationPhase().apply(backend.getTarget(), lirGenRes, context);
+            if (Boolean.getBoolean("gr73325.testInvokeBlockOrder") && graph.method().getName().startsWith("__stub_") && graph.method().getName().contains("Handler")) {
+                testHandlerBlockOrder(lir, lir.linearScanOrder(), true);
+            }
 
             if (entryPointDecorator != null) {
                 entryPointDecorator.initialize(backend.getProviders(), lirGenRes);
@@ -197,6 +309,11 @@ public class LIRCompilerBackend {
 
         PostAllocationOptimizationContext postAllocOptContext = new PostAllocationOptimizationContext(lirGen, blockOrder);
         lirSuites.getPostAllocationOptimizationStage().apply(target, lirGenRes, postAllocOptContext);
+        if (Boolean.getBoolean("gr73325.testHandlerCodeOrder") && lirGenRes.getCompilationUnitName().contains(".__stub_") && lirGenRes.getCompilationUnitName().contains("Handler")) {
+            LIR lir = lirGenRes.getLIR();
+            testHandlerBlockOrder(lir, lir.codeEmittingOrder(), false);
+            assert LIR.verifyBlocks(lir, lir.codeEmittingOrder()) : "invalid handler code order";
+        }
         debug.dump(DebugContext.BASIC_LEVEL, lirGenRes.getLIR(), "After PostAllocationOptimizationStage");
 
         FinalCodeAnalysisContext finalCodeAnalysisContext = new FinalCodeAnalysisContext(lirGen);
