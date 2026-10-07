@@ -3431,7 +3431,7 @@ public final class Interpreter {
             Object indyEntry = frame.constantPoolResolvedAt(indyCPI);
             if (indyEntry instanceof ResolvedInvokeDynamicConstant invokeDynamicConstant) {
                 // runtime-loaded case
-                SuccessfulCallSiteLink link = getOrLinkInvokeDynamic(invokeDynamicConstant, frame.method, frame.code, (int) curBCI, indyCPI, extraCPI);
+                SuccessfulCallSiteLink link = getOrLinkInvokeDynamic(invokeDynamicConstant, frame, (int) curBCI, fullCPI);
                 appendix = link.getUnboxedAppendix();
                 seedMethod = link.getInvoker();
             } else if (indyEntry instanceof InterpreterResolvedJavaMethod entryMethod) {
@@ -4014,24 +4014,26 @@ public final class Interpreter {
     }
 
     @AlwaysInline("Keep cached INVOKEDYNAMIC linkage lookup in bytecode-handler stubs")
-    private static SuccessfulCallSiteLink getOrLinkInvokeDynamic(ResolvedInvokeDynamicConstant constant, InterpreterResolvedJavaMethod method, byte[] code,
-                    int curBCI, int indyCPI, int extraCPI) {
+    private static SuccessfulCallSiteLink getOrLinkInvokeDynamic(ResolvedInvokeDynamicConstant constant, InterpreterFrame frame, int curBCI, int fullCPI) {
+        int extraCPI = fullCPI & 0xFFFF;
         if (GraalDirectives.injectBranchProbability(FASTPATH_PROBABILITY, extraCPI != 0)) {
             CallSiteLink link = constant.getCallSiteLink(extraCPI);
             if (GraalDirectives.injectBranchProbability(FASTPATH_PROBABILITY, link instanceof SuccessfulCallSiteLink)) {
                 SuccessfulCallSiteLink successfulLink = (SuccessfulCallSiteLink) link;
-                if (GraalDirectives.injectBranchProbability(FASTPATH_PROBABILITY, successfulLink.matchesCallSite(method, curBCI))) {
+                if (GraalDirectives.injectBranchProbability(FASTPATH_PROBABILITY, successfulLink.matchesCallSite(frame.method, curBCI))) {
                     return successfulLink;
                 }
             }
         }
-        return linkInvokeDynamic(constant, method, code, curBCI, indyCPI, extraCPI);
+        return linkInvokeDynamic(constant, frame, curBCI, fullCPI);
     }
 
     @NeverInline("Keep INVOKEDYNAMIC linkage, patching retries, and failures out of bytecode-handler stubs")
-    private static SuccessfulCallSiteLink linkInvokeDynamic(ResolvedInvokeDynamicConstant constant, InterpreterResolvedJavaMethod method, byte[] code,
-                    int curBCI, int indyCPI, int extraCPI) {
-        int linkedExtraCPI = extraCPI;
+    private static SuccessfulCallSiteLink linkInvokeDynamic(ResolvedInvokeDynamicConstant constant, InterpreterFrame frame, int curBCI, int fullCPI) {
+        InterpreterResolvedJavaMethod method = frame.method;
+        byte[] code = frame.code;
+        int indyCPI = fullCPI >>> 16;
+        int linkedExtraCPI = fullCPI & 0xFFFF;
         if (linkedExtraCPI == 0) {
             linkedExtraCPI = linkInvokeDynamicCallSite(constant, method, code, curBCI, indyCPI);
         }
