@@ -106,6 +106,10 @@ class LinearScanWalker extends IntervalWalker {
     private int fastPathRecoverySplitCount;
     private boolean fastPathRecoverySplitLimitReported;
     private EconomicMap<Interval, Register> fastPathRegisterHints;
+    private EconomicMap<Interval, CallClobberSplit> callClobberSplits;
+
+    private record CallClobberSplit(int splitPosition, int clobberPosition) {
+    }
 
     // accessors mapped to same functions in class LinearScan
     int blockCount() {
@@ -372,6 +376,13 @@ class LinearScanWalker extends IntervalWalker {
                         usePosition = Integer.MAX_VALUE;
                     } else {
                         usePosition = Math.min(nextUsage, interval.to());
+                        if (preferStateOnlyVictim && nextUsage == Integer.MAX_VALUE && callClobberSplits != null) {
+                            CallClobberSplit split = callClobberSplits.get(interval);
+                            if (split != null && interval.to() == split.splitPosition()) {
+                                // An earlier move-placement boundary is not a use of the value.
+                                usePosition = split.clobberPosition();
+                            }
+                        }
                     }
                     setUsePos(interval, usePosition, false);
                 }
@@ -813,6 +824,17 @@ class LinearScanWalker extends IntervalWalker {
         }
     }
 
+    /** Returns whether the unused register child leads directly to a call spill in its block. */
+    private boolean leadsToCallSpill(Interval parent, Interval spilled) {
+        if (callClobberSplits == null) {
+            return false;
+        }
+        CallClobberSplit split = callClobberSplits.get(parent);
+        return split != null && parent.to() == split.splitPosition() &&
+                        spilled.from() == split.splitPosition() && spilled.from() + 1 == split.clobberPosition() &&
+                        allocator.blockForId(parent.from()) == allocator.blockForId(split.clobberPosition());
+    }
+
     // split an interval at the optimal position between minSplitPos and
     // maxSplitPos in two parts:
     // 1) the left part has already a location assigned
@@ -863,7 +885,7 @@ class LinearScanWalker extends IntervalWalker {
 
                         if (isRegister(parent.location())) {
                             if (parent.firstUsage(RegisterPriority.ShouldHaveRegister) == Integer.MAX_VALUE &&
-                                            !allocator.intervalCoversFastPathBlock(parent)) {
+                                            (!allocator.intervalCoversFastPathBlock(parent) || leadsToCallSpill(parent, interval))) {
                                 // parent is never used, so kick it out of its assigned register
                                 if (debug.isLogEnabled()) {
                                     debug.log("kicking out interval %d out of its register because it is never used", parent.operandNumber);
@@ -874,9 +896,10 @@ class LinearScanWalker extends IntervalWalker {
                             } else {
                                 /*
                                  * Do not propagate the spill through a register child that is used
-                                 * or covers a marked fast-path block. This retains an existing
-                                 * register allocation without requiring later children to use a
-                                 * register.
+                                 * or covers a marked fast-path block, unless the unused child leads
+                                 * directly to a call spill in the same block. In that case the stack
+                                 * location is needed anyway; retaining the register child would
+                                 * introduce a reload only to spill it again before the call.
                                  */
                                 parent = null;
                             }
@@ -1011,7 +1034,20 @@ class LinearScanWalker extends IntervalWalker {
 
     void splitWhenPartialRegisterAvailable(Interval interval, int registerAvailableUntil) {
         int minSplitPos = Math.max(interval.previousUsage(RegisterPriority.ShouldHaveRegister, registerAvailableUntil), interval.from() + 1);
-        splitBeforeUsage(interval, minSplitPos, registerAvailableUntil);
+        Interval right = splitBeforeUsage(interval, minSplitPos, registerAvailableUntil);
+        if (allocator.hasFastPathBlocks() && right != null && interval.to() < registerAvailableUntil &&
+                        (registerAvailableUntil & 1) == 0 && allocator.hasCall(registerAvailableUntil) &&
+                        right.firstUsage(RegisterPriority.LiveAtLoopEnd) >= registerAvailableUntil) {
+            /*
+             * A call may force a split that is moved to an earlier block boundary. When the left
+             * child has no remaining use, rank it by the actual clobber, not that move-placement
+             * boundary. Remember the split position so subsequent splitting invalidates the hint.
+             */
+            if (callClobberSplits == null) {
+                callClobberSplits = EconomicMap.create(Equivalence.IDENTITY);
+            }
+            callClobberSplits.put(interval, new CallClobberSplit(interval.to(), registerAvailableUntil));
+        }
     }
 
     /**
