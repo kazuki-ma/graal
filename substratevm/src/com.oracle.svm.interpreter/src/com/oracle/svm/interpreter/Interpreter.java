@@ -3753,6 +3753,7 @@ public final class Interpreter {
      * must stay in the interpreter.
      */
     @SuppressWarnings("unused")
+    @AlwaysInline("Keep the operand-stack overlay virtual across interpreter backedges")
     private static long beforeJumpChecks(InterpreterFrame frame, long curBCI, long targetBCI, InterpreterOperandStack virtualStack) {
         if (targetBCI <= curBCI) {
             GraalDirectives.safepoint();
