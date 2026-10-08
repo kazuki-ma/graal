@@ -24,9 +24,19 @@
  */
 package com.oracle.svm.interpreter;
 
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Boolean;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Byte;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Char;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Double;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Float;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Int;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Long;
+import static com.oracle.svm.espresso.classfile.Constants.JVM_ArrayType_Short;
+
 import com.oracle.svm.shared.AlwaysInline;
 
 import jdk.graal.compiler.api.directives.GraalDirectives;
+import jdk.internal.misc.Unsafe;
 
 /**
  * Operand-stack overlay used by bytecode handlers. Up to two primitive slots are kept in the
@@ -36,6 +46,8 @@ import jdk.graal.compiler.api.directives.GraalDirectives;
  * debugging use the materialized stack without caching primitives.
  */
 final class CachedInterpreterOperandStack extends InterpreterOperandStack {
+    private static final Unsafe UNSAFE = Unsafe.getUnsafe();
+
     static final int STATE_TOS_1 = 3;
     static final int STATE_TOS_2 = 4;
 
@@ -187,9 +199,70 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     @Override
     @AlwaysInline("Keep the materialized state constant in the argument loop")
     void popArguments(InterpreterFrame frame, byte[] argumentKinds, Object[] arguments, long argumentIndex) {
+        if (state == STATE_TOS_1) {
+            if (argumentIndex >= 0) {
+                popArgument(frame, argumentKinds, arguments, argumentIndex);
+                argumentIndex--;
+                assert state == STATE_NORMAL;
+            } else {
+                materialize(frame);
+            }
+        } else if (state == STATE_TOS_2) {
+            if (argumentIndex >= 0) {
+                // Keep later decrements based on the index, not the original allocation length.
+                argumentIndex = GraalDirectives.opaque(argumentIndex);
+                int basicType = UNSAFE.getByte(argumentKinds, Unsafe.ARRAY_BYTE_BASE_OFFSET + argumentIndex * Unsafe.ARRAY_BYTE_INDEX_SCALE);
+                // Only merge category-1 cases before the second pop: they all leave STATE_TOS_1.
+                switch (basicType) {
+                    case JVM_ArrayType_Boolean, JVM_ArrayType_Byte, JVM_ArrayType_Short, JVM_ArrayType_Char, JVM_ArrayType_Int, JVM_ArrayType_Float -> {
+                        Object value = switch (basicType) {
+                            case JVM_ArrayType_Boolean -> popInt(frame) != 0;
+                            case JVM_ArrayType_Byte -> (byte) popInt(frame);
+                            case JVM_ArrayType_Short -> (short) popInt(frame);
+                            case JVM_ArrayType_Char -> (char) popInt(frame);
+                            case JVM_ArrayType_Int -> popInt(frame);
+                            case JVM_ArrayType_Float -> popFloat(frame);
+                            default -> throw InterpreterUtil.shouldNotReachHereAtRuntime();
+                        };
+                        UNSAFE.putReference(arguments, Unsafe.ARRAY_OBJECT_BASE_OFFSET + argumentIndex * Unsafe.ARRAY_OBJECT_INDEX_SCALE, value);
+                        argumentIndex--;
+                        assert state == STATE_TOS_1;
+                        if (argumentIndex >= 0) {
+                            popArgument(frame, argumentKinds, arguments, argumentIndex);
+                            argumentIndex--;
+                            assert state == STATE_NORMAL;
+                        } else {
+                            materialize(frame);
+                        }
+                    }
+                    case JVM_ArrayType_Long -> {
+                        UNSAFE.putReference(arguments, Unsafe.ARRAY_OBJECT_BASE_OFFSET + argumentIndex * Unsafe.ARRAY_OBJECT_INDEX_SCALE, popLong(frame));
+                        if (argumentIndex == 0) {
+                            killUnusedFields();
+                            return;
+                        }
+                        argumentIndex--;
+                        assert state == STATE_NORMAL;
+                    }
+                    case JVM_ArrayType_Double -> {
+                        UNSAFE.putReference(arguments, Unsafe.ARRAY_OBJECT_BASE_OFFSET + argumentIndex * Unsafe.ARRAY_OBJECT_INDEX_SCALE, popDouble(frame));
+                        if (argumentIndex == 0) {
+                            killUnusedFields();
+                            return;
+                        }
+                        argumentIndex--;
+                        assert state == STATE_NORMAL;
+                    }
+                    default -> throw InterpreterUtil.shouldNotReachHereAtRuntime();
+                }
+            } else {
+                materialize(frame);
+            }
+        }
+        killUnusedFields();
         assert state == STATE_NORMAL || state == STATE_PROFILING || state == STATE_DEBUGGING;
         int invocationState = state;
-        for (; GraalDirectives.injectBranchProbability(GraalDirectives.LIKELY_PROBABILITY, argumentIndex >= 0); argumentIndex--) {
+        for (; GraalDirectives.injectBranchProbability(0.5, argumentIndex >= 0); argumentIndex--) {
             state = invocationState;
             popArgument(frame, argumentKinds, arguments, argumentIndex);
         }

@@ -62,6 +62,7 @@ import jdk.graal.compiler.lir.phases.LIRSuites;
 import jdk.graal.compiler.lir.phases.PostAllocationOptimizationPhase.PostAllocationOptimizationContext;
 import jdk.graal.compiler.lir.phases.PreAllocationOptimizationPhase.PreAllocationOptimizationContext;
 import jdk.graal.compiler.nodes.GraphState.StageFlag;
+import jdk.graal.compiler.nodes.IfNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.StructuredGraph.ScheduleResult;
 import jdk.graal.compiler.nodes.cfg.HIRBlock;
@@ -132,6 +133,12 @@ public class LIRCompilerBackend {
             }
             reachable.set(id);
             for (int i = 0; i < block.getSuccessorCount(); i++) {
+                // Keep explicitly slow alternatives, including their inlined barriers, out of
+                // the fast region. Shared continuations remain reachable through the fast edge.
+                if (block instanceof HIRBlock hirBlock && hirBlock.getEndNode() instanceof IfNode ifNode && ifNode.profileSource().isInjected() &&
+                                block.getSuccessorProbabilityAt(i) <= jdk.graal.compiler.api.directives.GraalDirectives.SLOWPATH_PROBABILITY) {
+                    continue;
+                }
                 pending.add(block.getSuccessorAt(i));
             }
         }

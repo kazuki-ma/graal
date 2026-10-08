@@ -248,8 +248,9 @@ class InterpreterOperandStack {
         if (argumentKinds == null) {
             throw InterpreterUtil.shouldNotReachHereAtRuntime();
         }
-        long argumentIndex = arguments.length - 1L;
-        if (appendix != null) {
+        // Subtract before widening to avoid retaining a long copy of the allocation length.
+        long argumentIndex = arguments.length - 1;
+        if (GraalDirectives.injectBranchProbability(GraalDirectives.SLOWPATH_PROBABILITY, appendix != null)) {
             assert UNSAFE.getByte(argumentKinds, Unsafe.ARRAY_BYTE_BASE_OFFSET + argumentIndex * Unsafe.ARRAY_BYTE_INDEX_SCALE) == JVM_ArrayType_Object;
             UNSAFE.putReference(arguments, Unsafe.ARRAY_OBJECT_BASE_OFFSET + argumentIndex * Unsafe.ARRAY_OBJECT_INDEX_SCALE, appendix);
             argumentIndex--;
