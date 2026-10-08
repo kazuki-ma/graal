@@ -42,6 +42,7 @@ final class CachedInterpreterOperandStack extends InterpreterOperandStack {
     private long tosPrimitive0;
     private long tosPrimitive1;
 
+    @AlwaysInline("Keep the operand-stack overlay virtual in interpreter entry")
     CachedInterpreterOperandStack(long top) {
         super(top);
     }
